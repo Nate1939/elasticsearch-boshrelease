@@ -1,0 +1,28 @@
+processes:
+- name: elasticsearch
+  executable: /var/vcap/packages/elasticsearch/bin/elasticsearch
+  
+  args:
+  <%- p("elasticsearch.exec.options").each do |exec_option| -%>
+  - <%= exec_option %>
+  <%- end -%>
+
+  persistent_disk: true
+  ephemeral_disk: true
+  
+  env:
+    ES_TMPDIR: /var/vcap/data/elasticsearch/tmp/elasticsearch
+
+  additional_volumes:
+  - path: /var/vcap/packages/elasticsearch/config
+    writable: true
+  - path: /var/vcap/data/elasticsearch/tmp/elasticsearch
+    writable: true
+    allow_executions: true
+  
+  capabilities:
+  - IPC_LOCK
+
+  limits:
+    open_files: 65536
+    processes: 4096
