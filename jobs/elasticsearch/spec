@@ -2,15 +2,22 @@
 name: elasticsearch
 
 templates:
-  bin/ctl: bin/ctl
   bin/post-start: bin/post-start
   bin/pre-start: bin/pre-start
   bin/drain: bin/drain
   bin/keystore-add.sh: bin/keystore-add.sh
-  bin/ctl_utils.sh: bin/ctl_utils.sh
+  
+  bpm.yml.erb: config/bpm.yml
+
   config/elasticsearch.yml: config/elasticsearch.yml
-  config/jvm.options: config/jvm.options
-  config/log4j2.properties: config/log4j2.properties
+  config/heap.jvm.options.erb: config/heap.jvm.options
+  config/ca-bundle.pem.erb: config/ca-bundle.pem
+  config/license.json.erb: config/license.json
+  config/role_mapping.yml: config/role_mapping.yml
+
+  tls/ca_file.erb:   tls/ca_file
+  tls/nodecert.crt.erb: tls/nodecert.crt
+  tls/nodeprivkey.key.erb: tls/nodeprivkey.key
 
 packages:
 - elasticsearch
@@ -33,26 +40,61 @@ properties:
   elasticsearch.exec.options:
     description: An array of additional options to pass when starting elasticsearch
     default: []
+    example: |-
+      - --quiet
+      - -E http.port=9200-9300
   elasticsearch.heap_size:
     description: sets jvm heap sized
+  elasticsearch.custom_heap_calc:
+    description: If set to true, custom code will be used to calculate and set heap based on allocated memory and node type
+    default: false
   elasticsearch.jvm_options:
     description: Additional Java Virtual Machine options
     default: []
   elasticsearch.cluster_name:
     description: The name of the elastic search cluster
     default: "bosh_es"
-  elasticsearch.node.allow_master:
-    description: Allow node to become master? (true / false)
-    default: true
-  elasticsearch.node.allow_data:
-    description: Allow node to store data? (true / false)
-    default: true
-  elasticsearch.node.allow_ingest:
-    description: Allow node to become ingest node? (true / false)
-    default: false
+  elasticsearch.node.roles:
+    description: An array of possible node roles (use lower case), https://www.elastic.co/guide/en/elasticsearch/reference/7.14/modules-node.html
+    default: []
   elasticsearch.health.timeout:
     description: Post-start timeout for node to join cluster (seconds)
     default: 300
+  elasticsearch.tls.enabled:
+    description: If true, TLS/SSL will be enabled
+    default: true
+  elasticsearch.tls.mode:
+    description: sets the "xpack.security.transport.ssl.verification_mode"
+    default: full
+  elasticsearch.tls.ca:
+    description: >-
+      This provides a file path to a PEM-encoded Certificate Authority.
+      The Certificate Authority is used to check the authenticity of client and server connections
+    example: |-
+      -----BEGIN CERTIFICATE-----
+      .
+      .
+      .
+      -----END CERTIFICATE-----
+  elasticsearch.tls.cert:
+    description: >-
+      This provides a file path to a PEM-encoded certificate.
+    example: |-
+      -----BEGIN CERTIFICATE-----
+      .
+      .
+      .
+      -----END CERTIFICATE-----
+  elasticsearch.tls.key:
+    description: >-
+      This provides a the file path to a PEM-encoded private key.
+    example: |-
+      -----BEGIN RSA PRIVATE KEY-----
+      .
+      .
+      .
+      -----END RSA PRIVATE KEY-----
+
   elasticsearch.health.interval:
     description: Post-start interval for node to join cluster (seconds)
     default: 15
@@ -91,10 +133,9 @@ properties:
           value: fooo
   elasticsearch.client.protocol:
     description: "Protocol of elasticsearch to send requests to"
-    default: http
+    default: https
   elasticsearch.client.host:
     description: "Host of elasticsearch to send requests to"
-    default: localhost
   elasticsearch.client.port:
     description: "Port of elasticsearch to send requests to"
     default: 9200
@@ -112,3 +153,31 @@ properties:
   monit.enable_http_healthcheck:
     description: "Whether to enable http healthchek for monit (true / false). Disabled by default."
     default: false
+  auth.active_directory.certificate_authorities:
+    description: "AD cert authorities"
+  auth.active_directory.role_mapping_superusers:
+    description: array of AD objects that should have the superuser role. Also, set auth.active_directory.enabled to true, if this property is to be used. 
+    default: []
+  auth.active_directory.enabled:
+    description: "is the AD auth realm enabled"
+    default: false
+  auth.active_directory.alias:
+    description: "An optional alias/short name for your AD domain. will be used in realm name. must be terminated with a dot (.), if default blank is not used"
+    default: ""
+  elasticsearch.license.upload:
+    description: "Set to false if you don't want to upload a license to Elasticsearch, if this is set to true, a file must also be provided for elasticsearch.license.file"
+    default: false
+  elasticsearch.license.file:
+    description: "Elasticsearch license file in json format"
+  elasticsearch.built-in_user_pwds.apm_system:
+    description: "Password for the built-in user, apm_system. xpack.security.enabled must be true to set this password"
+  elasticsearch.built-in_user_pwds.kibana_system:
+    description: "Password for the built-in users, kibana_system and kibana(will be deprecated). xpack.security.enabled must be true to set this password"
+  elasticsearch.built-in_user_pwds.logstash_system:
+    description: "Password for the built-in user, logstash_system. xpack.security.enabled must be true to set this password"
+  elasticsearch.built-in_user_pwds.beats_system:
+    description: "Password for the built-in user, beats_system. xpack.security.enabled must be true to set this password"
+  elasticsearch.built-in_user_pwds.remote_monitoring_user:
+    description: "Password for the built-in user, remote_monintoring_user. xpack.security.enabled must be true to set this password"
+  elasticsearch.built-in_user_pwds.elastic:
+    description: "Password for the built-in user, elastic. xpack.security.enabled must be true to set this password. And when security is enabled, this must be be provided to set initial bootstrap password and upload license"

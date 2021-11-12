@@ -2,9 +2,9 @@
 
 set -e
 
-export url=<%= p("elasticsearch.client.protocol") %>://<%= p("elasticsearch.client.username") %>:<%= p("elasticsearch.client.password") %>@<%= p("elasticsearch.client.host") %>:<%= p("elasticsearch.client.port") %>
+export url=<%= p("elasticsearch.client.protocol") %>://<%= p("elasticsearch.client.username") %>:<%= p("elasticsearch.client.password") %>@<%= spec.address %>:<%= p("elasticsearch.client.port") %>
 
-<% if p('elasticsearch.node.allow_data') %>
+<% if p('elasticsearch.node.roles').to_s.include? "data" %>
 # disable allocations before bringing down data nodes
 curl -s -X PUT -H 'Content-Type: application/json' -k ${url}/_cluster/settings \
   -d '{"persistent": {"cluster.routing.allocation.enable": "none"}}' \

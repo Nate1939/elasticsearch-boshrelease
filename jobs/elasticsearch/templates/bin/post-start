@@ -1,7 +1,59 @@
 #!/bin/bash
 # Inspired by https://github.com/cloudfoundry/exemplar-release/blob/master/jobs/paragon/templates/post-start
 # If a command fails, exit immediately
-set -e
+set -ex
+
+sleep 20
+
+JOBS_ES_CONF="/var/vcap/jobs/elasticsearch/config"
+ELASTIC_PWD=<%= p("elasticsearch.built-in_user_pwds.elastic", "" ) %>
+
+export url=<%= p("elasticsearch.client.protocol") %>://<%= p("elasticsearch.client.username") %>:<%= p("elasticsearch.client.password") %>@<%= spec.address %>:<%= p("elasticsearch.client.port") %>
+
+### Set passwords for the built-in users. If node is a clean master node, it can only add bootstrap pwd. First data node can run elasticsearch-setup-passwords script
+<% if (p("elasticsearch.node.roles").to_s.include? "data") && !p("elasticsearch.built-in_user_pwds.elastic", "" ).empty? && !p("elasticsearch.built-in_user_pwds.remote_monitoring_user", "" ).empty? && !p("elasticsearch.built-in_user_pwds.beats_system", "" ).empty? && !p("elasticsearch.built-in_user_pwds.logstash_system", "" ).empty? && !p("elasticsearch.built-in_user_pwds.kibana_system", "" ).empty? && !p("elasticsearch.built-in_user_pwds.apm_system", "" ).empty? %>
+export url_set_pwd=<%= p("elasticsearch.client.protocol") %>://<%= spec.address %>:<%= p("elasticsearch.client.port") %>
+if ( echo y ; echo <%= p("elasticsearch.built-in_user_pwds.elastic") %> ; echo <%= p("elasticsearch.built-in_user_pwds.elastic") %> ; echo <%= p("elasticsearch.built-in_user_pwds.apm_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.apm_system") %>  ; echo <%= p("elasticsearch.built-in_user_pwds.kibana_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.kibana_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.logstash_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.logstash_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.beats_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.beats_system") %> ; echo <%= p("elasticsearch.built-in_user_pwds.remote_monitoring_user") %> ; echo <%= p("elasticsearch.built-in_user_pwds.remote_monitoring_user") %> ) | /var/vcap/packages/elasticsearch/bin/elasticsearch-setup-passwords interactive -u ${url_set_pwd} ; then
+	echo "Passwords for built-in users were set"
+else
+    echo "Passwords might already be set for built-in users. If someone has not already set up the passwords, 
+    password creation for built in users failed, but that can be caused by several valid reasons, for instance xpack security not enabled,
+    which may be desired in an early development stage"
+fi
+
+<% elsif (p("elasticsearch.node.roles").to_s.include? "master") && (!p("elasticsearch.node.roles").to_s.include? "data") && !p("elasticsearch.built-in_user_pwds.elastic", "" ).empty?  %>
+echo <%= p("elasticsearch.built-in_user_pwds.elastic") %> | /var/vcap/packages/elasticsearch/bin/elasticsearch-keystore add -xf "bootstrap.password"
+chown vcap:vcap /var/vcap/packages/elasticsearch/config/elasticsearch.keystore
+/var/vcap/bosh/bin/monit restart elasticsearch
+sleep 20
+<% end %>
+###
+
+### Update license for Elasticsearch cluster 
+if [[ "<%= p("elasticsearch.license.upload") %>" = true ]] && [[ "<%= p("elasticsearch.tls.enabled") %>" = true ]]; then
+
+<%- if !p("elasticsearch.built-in_user_pwds.elastic", "" ).empty? -%>
+curl -XPUT ${url}/_license -H "Content-Type: application/json" -d @/var/vcap/jobs/elasticsearch/config/license.json -u elastic:$ELASTIC_PWD
+<%- else -%>
+echo "User credentials ( of the built-in 'elastic' user) are needed to upload the license" 
+exit 1
+<%- end -%>
+
+fi
+###
+
+### AD-integration certificate authorities
+<%- if_p("auth.active_directory.certificate_authorities") do -%>
+echo xpack.security.authc.realms.active_directory.<%= p("auth.active_directory.alias") %>ssl.certificate_authorities: "/var/vcap/packages/elasticsearch/config/ca-bundle.pem" >> "$JOBS_ES_CONF/elasticsearch.yml"
+<% end %>
+###
+
+### Add values to keystore if relevant
+<%- if_p("elasticsearch.secure_settings") do -%>
+/var/vcap/jobs/elasticsearch/bin/keystore-add.sh
+<% end %>
+###
+/var/vcap/bosh/bin/monit restart elasticsearch
 
 <% if !p("elasticsearch.health.disable_post_start") %>
 
@@ -12,15 +64,13 @@ export max_attempts=$((timeout / polling_frequency))
 export attempts=0
 out=$(mktemp health-XXXXXX)
 
-export url=<%= p("elasticsearch.client.protocol") %>://<%= p("elasticsearch.client.username") %>:<%= p("elasticsearch.client.password") %>@<%= p("elasticsearch.client.host") %>:<%= p("elasticsearch.client.port") %>
-
 while [[ "$max_attempts" -ge "$attempts" ]]; do
     set +e
     echo "attempt $attempts"
-    <% if p("elasticsearch.node.allow_data") and not p("elasticsearch.node.allow_master") %>
-    curl -s -f --max-time $timeout -sw '\n%{http_code}' -k ${url}/_cluster/health > ${out}
+    <% if p('elasticsearch.node.roles').to_s.include? "data" and not p('elasticsearch.node.roles').to_s.include? "master" %>
+    curl -s -f --max-time $timeout -sw '\n%{http_code}' -k ${url}/_cluster/health -u elastic:$ELASTIC_PWD > ${out}
     <% else %>
-    curl -s -f --max-time $timeout -sw '\n%{http_code}' -k ${url}/_cluster/health?local=true > ${out}
+    curl -s -f --max-time $timeout -sw '\n%{http_code}' -k ${url}/_cluster/health?local=true -u elastic:$ELASTIC_PWD > ${out}
     <% end %>
     body=$(cat ${out} | head -n -1)
     status=$(cat ${out} | tail -n 1)
@@ -28,10 +78,10 @@ while [[ "$max_attempts" -ge "$attempts" ]]; do
     echo "status: ${status}"
     echo $body | grep '"status":"red"'
     grep_red_status=$?
-    curl -X PUT -s -H 'Content-Type: application/json' -k ${url}/_cluster/settings \
+    curl -X PUT -s -H 'Content-Type: application/json' -k ${url}/_cluster/settings -u elastic:$ELASTIC_PWD \
 	-d '{"persistent": {"cluster.routing.allocation.enable": "<%= p("elasticsearch.cluster.routing.allocation.enable_post_start") %>"}}'
-    <% if p("elasticsearch.node.allow_data") and not p("elasticsearch.node.allow_master") %>
-    if [ "${status}" = "200" ] && [ "${grep_red_status}" != "0" ] && echo ${body} | grep '"status":"green"'; then
+    <% if p('elasticsearch.node.roles').to_s.include? "data" and not p('elasticsearch.node.roles').to_s.include? "master" %>
+    if [ "${status}" = "200" ] && [ "${grep_red_status}" != "0" ]; then
         rm ${out}
         exit 0
     fi

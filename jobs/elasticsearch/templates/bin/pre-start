@@ -1,10 +1,66 @@
 #!/bin/bash
-set -e
-export JAVA_HOME=/var/vcap/packages/java
+set -ex
+
+###
+sysctl -q -w vm.max_map_count=262144
+
+sed -i 's|logs/|/var/vcap/sys/log/elasticsearch/|I' /var/vcap/packages/elasticsearch/config/jvm.options
+###
+
+JOBS_ES_CONF="/var/vcap/jobs/elasticsearch/config"
+JOBS_ES_TLS="/var/vcap/jobs/elasticsearch/tls"
+PACKAGES_ES_CONF="/var/vcap/packages/elasticsearch/config" 
+
+### If heap size is specified explicitly, use that heap size. If custom_heap_calc is set, then use that.
+### If not, heap size will be set automatically by Elasticsearch, depending on a node's roles and total memory
+<% if_p("elasticsearch.heap_size") do |heap_size| %>
+heap=<%= heap_size %>
+echo -Xms${heap} >> "$JOBS_ES_CONF/heap.jvm.options"
+echo -Xmx${heap} >> "$JOBS_ES_CONF/heap.jvm.options"
+<%- end.else do -%>
+   if [[ "<%= p("elasticsearch.custom_heap_calc") %>" = true ]]; then
+
+        ### Decide whether node is data or not
+        <%-
+        node_type = nil
+        if p("elasticsearch.node.roles").to_s.include? "data"
+         node_type="data"
+        end
+        -%>
+        node_type=<%= node_type %>
+
+        ### function to calculate heap
+        set_heap() {
+        echo $(((( $( cat /proc/meminfo | grep MemTotal | awk '{ print $2 }' ) * $1 ) / 100 ) / 1024 ))
+        }
+        ###
+
+        ### Heap is set depending on node type
+        case $node_type in
+
+          data)
+            heap=$(set_heap 50)
+            ;;
+            
+          *)
+            heap=$(set_heap 80)
+            ;;
+        esac
+
+        echo -Xms${heap}m >> "$JOBS_ES_CONF/heap.jvm.options"
+        echo -Xmx${heap}m >> "$JOBS_ES_CONF/heap.jvm.options"
+        echo "#$node_type" >> "$JOBS_ES_CONF/heap.jvm.options"
+        ###
+
+   fi
+
+<% end %>
+###
+
 export PATH=$PATH:/var/vcap/packages/elasticsearch/bin
 mkdir -p /var/vcap/packages/elasticsearch/plugins
 
-# install plugins
+### install plugins
 rm -rf /var/vcap/packages/elasticsearch/plugins/*
 <%
   opts = p("elasticsearch.plugin_install_opts").join(' ')
@@ -25,5 +81,49 @@ fi
 
 echo "== Installed plugins =="
 elasticsearch-plugin list
+###
 
-/var/vcap/jobs/elasticsearch/bin/keystore-add.sh
+###
+rm -f /var/vcap/packages/elasticsearch/config/elasticsearch.keystore
+###
+
+###
+if [[ ! -h $PACKAGES_ES_CONF/jvm.options.d ]]; then
+
+    ln -snf "$JOBS_ES_CONF/heap.jvm.options" "$PACKAGES_ES_CONF/jvm.options.d"
+fi
+####
+
+###
+if [[ ! -h $PACKAGES_ES_CONF/elasticsearch.yml ]]; then
+
+    rm -f $PACKAGES_ES_CONF/elasticsearch.yml
+    ln -snf "$JOBS_ES_CONF/elasticsearch.yml" "$PACKAGES_ES_CONF/elasticsearch.yml"
+fi
+###
+
+###
+mkdir -p "$PACKAGES_ES_CONF/tls"
+if [[ ! -h $PACKAGES_ES_CONF/tls ]]; then
+
+    ln -snf "$JOBS_ES_TLS/" "$PACKAGES_ES_CONF/tls"
+fi
+####
+
+###
+if [[ ! -h $PACKAGES_ES_CONF/config/ca-bundle.pem ]]; then
+
+    ln -snf "$JOBS_ES_CONF/ca-bundle.pem" "$PACKAGES_ES_CONF/ca-bundle.pem"
+fi
+####
+
+###
+if [[ ! -h $PACKAGES_ES_CONF/role_mapping.yml ]] && [[ "<%= p("auth.active_directory.enabled") %>" = true ]]; then
+
+    rm -f $PACKAGES_ES_CONF/role_mapping.yml
+    ln -snf "$JOBS_ES_CONF/role_mapping.yml" "$PACKAGES_ES_CONF/role_mapping.yml"
+fi
+###
+
+###
+chown -RL vcap:vcap /var/vcap/packages/elasticsearch
