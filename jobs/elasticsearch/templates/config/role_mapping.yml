@@ -1,0 +1,4 @@
+<%- if p("auth.active_directory.enabled") == true -%>
+superuser:
+  <%= p("auth.active_directory.role_mapping_superusers") %>
+<%- end -%>
